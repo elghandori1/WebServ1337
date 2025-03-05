@@ -1,21 +1,18 @@
-#include "Config.hpp"
+#include "../../include/Config.hpp"
 
-Config::Config() {
-    max_body_size = std::numeric_limits<unsigned long long>::max();
-}
+Config::Config() : max_body_size(1048576) {} // 1MB
 
 
 std::string readConfigFile(std::string path) {
     std::string config_content;
     if (path.size() < 5 || (path[path.size() - 1] != 'f' || path[path.size() - 2] != 'n') || path[path.size() - 3] != 'o' || path[path.size() - 4] != 'c' || path[path.size() - 5]  != '.')
         throw std::runtime_error("invalid extention, expected exemple.conf");
-    std::ifstream file(path);
+    std::ifstream file(path.c_str());
     if (!file.is_open())
         throw std::runtime_error("Failed to open file: " + path);
     std::string line;
     while (std::getline(file, line))
         config_content += line + "\n";
-        // std::cerr << config_content.size() << std::endl;
     if (config_content.size() == 0)
         throw std::runtime_error("Empty configuration file");
     return config_content;
@@ -32,10 +29,13 @@ void    Config::insertPort(std::string value) {
             throw std::runtime_error("PORT ERROR: invalid port number");
         if (portValue.size() > 5)
             throw std::runtime_error("PORT ERROR: invalid port number");
-        port = std::stoi(portValue);
+        port = atoull(portValue);
         if (port < 1024 || port > 65535)
             throw std::runtime_error("PORT ERROR: cannot bind to this port number");
-        ports.insert(port);
+        if ((std::find(ports.begin(), ports.end(), port)) != ports.end()) {
+            throw std::runtime_error("PORT ERROR");
+        }
+        ports.push_back(port);
     }
 }
 
@@ -50,7 +50,7 @@ void    Config::insertHost(std::string value) {
             throw std::runtime_error("HOST ERROR: invalid host number");
         if (Octet.size() > 3)
             throw std::runtime_error("HOST ERROR: invalid host number");
-        if (std::stoi(Octet) < 0 || std::stoi(Octet) > 255)
+        if (atoull(Octet) < 0 || atoull(Octet) > 255)
             throw std::runtime_error("HOST ERROR: invalid host number");
         count++;
     }
@@ -68,7 +68,7 @@ void    Config::insertAllowedMethods(std::string value) {
             throw std::runtime_error("METHOD ERROR: empty method, git good ^^");
         if (method != "GET" && method != "POST" && method != "DELETE")
             throw std::runtime_error("METHOD ERROR: invalid method");
-        allowed_methods.insert(value);
+        allowed_methods.insert(method);
     }
 }
 
@@ -76,7 +76,7 @@ void    Config::insertMaxBodySize(std::string value) {
     if (value.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("MAX BODY SIZE ERROR: invalid max body size");
     try {
-        max_body_size = std::stoull(value);
+        max_body_size = atoull(value);
     }
     catch (std::exception &e) {
         throw std::runtime_error("MAX BODY SIZE ERROR: invalid max body size");
@@ -126,7 +126,7 @@ void    Config::insertErrorPages(std::string value) {
         std::string errorPage = error.substr(error.find(':') + 1);
         if (errorPage.empty())
             throw std::runtime_error("ERROR_PAGES ERROR: empty error page");
-        error_pages[std::stoi(errorCode)] = errorPage;
+        error_pages[atoull(errorCode)] = errorPage;
     }
 }
 
@@ -179,16 +179,13 @@ void    Config::insertRoute(std::string value) {
         std::string key = rule.substr(0, rule.find('='));
         if (!validRouteRule(key))
             throw std::runtime_error("ROUTE ERROR: invalid route rule");
-        // parse value 3la 7sab lkey
         std::string value = rule.substr(rule.find('=') + 1);
         if (value.empty())
             throw std::runtime_error("ROUTE ERROR: empty route rule value");
         if (key == "ROOT") {
             route.root = rule.substr(rule.find('=') + 1);
-            if (route.root.back() != '/')
-                route.root += "/";
         }
-        else if (key == "ALLOWED_METHODES") {
+        else if (key == "ALLOWED_METHODS") {
             std::istringstream methodStream(value);
             std::string method;
             while (std::getline(methodStream, method, '-')) {
@@ -199,8 +196,18 @@ void    Config::insertRoute(std::string value) {
                 route.allowed_methods.insert(method);
             }
         }
-
-        else if (key == "REDIRECT") { route.redirect = value; }
+        else if (key == "REDIRECT") {
+            if (value.find(':') == std::string::npos)
+                throw std::runtime_error("ROUTE ERROR: invalid REDIRECT rule, missing :");
+            
+            route.redirectStatusCode = value.substr(0, value.find(':'));
+            if (!validateRedirCode(route.redirectStatusCode))
+                throw std::runtime_error("ROUTE ERROR: invalid REDIRECT rule, invalid Redirect code");
+            route.redirectUri = value.substr(value.find(':')+1);
+            if (route.redirectUri.empty())
+                throw std::runtime_error("ROUTE ERROR: invalid REDIRECT rule, empty redirection uri");
+            redirLoopDetector[path] = route.redirectUri;
+        }
         else if (key == "DEFAULT_FILE") { route.default_file = value; }
         else if (key == "DIR_LISTING") {
             if (value == "on" || value == "1")
@@ -214,7 +221,7 @@ void    Config::insertRoute(std::string value) {
             if (value.find_first_not_of("0123456789") != std::string::npos)
                 throw std::runtime_error("ROUTE ERROR: invalid max body size");
             try {
-                route.max_body_size = std::stoull(value);
+                route.max_body_size = atoull(value);
             }
             catch (std::exception &e) {
                 throw std::runtime_error("ROUTE ERROR: invalid max body size");
@@ -233,51 +240,18 @@ void    Config::insertRoute(std::string value) {
         }
         else if (key == "UPLOAD_DIR") {
             route.upload_dir = value;
-            if (route.upload_dir.back() != '/')
-                route.upload_dir += "/";
         }        
     }
     routes[path] = route;
 }
 
-void    Config::printConfig() {
-    std::cerr << "SERVER START [" << std::endl;
-    std::cerr << "PORTS: ";
-    for (std::set<int>::iterator it = ports.begin(); it != ports.end(); it++)
-        std::cerr << *it << " ";
-    std::cerr << std::endl;
-    std::cerr << "HOST: " << host << std::endl;
-    std::cerr << "ALLOWED METHODS: ";
-    for (std::set<std::string>::iterator it = allowed_methods.begin(); it != allowed_methods.end(); it++)
-        std::cerr << *it << " ";
-    std::cerr << std::endl;
-    std::cerr << "MAX BODY SIZE: " << max_body_size << std::endl;
-    std::cerr << "SERVER NAMES: ";
-    for (std::vector<std::string>::iterator it = server_names.begin(); it != server_names.end(); it++)
-        std::cerr << *it << " ";
-    std::cerr << std::endl;
-    std::cerr << "ERROR PAGES: ";
-    for (std::map<int, std::string>::iterator it = error_pages.begin(); it != error_pages.end(); it++)
-        std::cerr << it->first << " " << it->second << " ";
-    std::cerr << std::endl;
-    std::cerr << "ROUTES:" << std::endl;
-    for (std::map<std::string, Route>::iterator it = routes.begin(); it != routes.end(); it++) {
-        std::cerr << "ROUTE: [" << it->first << "]\n{" << std::endl;
-        std::cerr << "  ROOT: " << it->second.root << std::endl;
-        std::cerr << "  ALLOWED METHODS: ";
-        for (std::set<std::string>::iterator it2 = it->second.allowed_methods.begin(); it2 != it->second.allowed_methods.end(); it2++)
-            std::cerr << *it2 << " ";
-        std::cerr << std::endl;
-        std::cerr << "  REDIRECT: " << it->second.redirect << std::endl;
-        std::cerr << "  DEFAULT FILE: " << it->second.default_file << std::endl;
-        std::cerr << "  DIR LISTING: " << it->second.dir_listing << std::endl;
-        std::cerr << "  MAX BODY SIZE: " << it->second.max_body_size << std::endl;
-        std::cerr << "  CGI EXTENSIONS: ";
-        for (std::vector<std::string>::iterator it2 = it->second.cgi_extensions.begin(); it2 != it->second.cgi_extensions.end(); it2++)
-            std::cerr << *it2 << " ";
-        std::cerr << std::endl;
-        std::cerr << "  UPLOAD DIR: " << it->second.upload_dir << std::endl;
-        std::cerr << "}" << std::endl;
-    }
-    std::cerr << "] SERVER END"<< std::endl << std::endl;
+const std::string& Config::getHost( void )  const
+{
+    return (host);
 }
+
+const std::vector<int>& Config::getPorts( void ) const
+{
+    return (ports);
+}
+

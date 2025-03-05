@@ -1,22 +1,30 @@
+CXX = c++
+CXXFLAGS = -Ofast -Wall -Wextra -Werror -std=c++98 
+
 NAME = webserv
-CC = c++ 
-CPPFLAGS = #-Wall -Wextra -Werror
-CPPVERSION = #-std=c++98
-SRCS = Webserv.cpp ./Config/Config.cpp ./Config/Route.cpp
+
+SRCS = src/http/HttpRequest.cpp src/config/Server.cpp src/Common.cpp src/config/Socket.cpp \
+		src/config/Config.cpp src/Route.cpp src/Webserv.cpp src/config/ServerManager.cpp \
+		src/Client.cpp src/http/HttpResponse.cpp
+
 OBJS = $(SRCS:.cpp=.o)
 
 all: $(NAME)
 
-$(NAME): $(OBJS)
-	$(CC) $(CPPFLAGS) $(CPPVERSION) $(OBJS) -o $(NAME)
+$(NAME): $(OBJS) 
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
-%.o: %.cpp
-	$(CC) $(CPPFLAGS) $(CPPVERSION) -c $< -o $@
+%.o: %.cpp ./include/*
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	@rm -f $(OBJS)
+	rm -rf $(OBJS)
 
 fclean: clean
-	@rm -f $(NAME)
+	rm -rf $(NAME)
 
-re : fclean all
+re: fclean all
+
+.PHONY: all clean
+
+.SECONDARY: $(OBJS)
